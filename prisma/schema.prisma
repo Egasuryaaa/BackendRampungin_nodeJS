@@ -1,0 +1,281 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["auth", "transaksi"]
+}
+
+model ip_blocks {
+  id         Int       @id @default(autoincrement())
+  ip_address String    @unique @db.VarChar(45)
+  reason     String?
+  blocked_at DateTime? @default(now()) @db.Timestamp(6)
+  unblock_at DateTime? @db.Timestamp(6)
+
+  @@index([ip_address], map: "idx_ip_blocks_ip")
+  @@schema("auth")
+}
+
+model jwt_blacklist {
+  id         Int       @id @default(autoincrement())
+  token_hash String    @unique @db.VarChar(255)
+  user_id    Int?
+  expires_at DateTime  @db.Timestamp(6)
+  created_at DateTime? @default(now()) @db.Timestamp(6)
+  users      users?    @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([expires_at], map: "idx_jwt_blacklist_expires")
+  @@index([token_hash], map: "idx_jwt_blacklist_token")
+  @@schema("auth")
+}
+
+model login_logs {
+  id         BigInt    @id @default(autoincrement())
+  ip_address String?   @db.VarChar(45)
+  email      String?   @db.VarChar(100)
+  is_success Boolean?  @default(false)
+  user_agent String?
+  login_at   DateTime? @default(now()) @db.Timestamp(6)
+
+  @@index([ip_address], map: "idx_login_logs_ip")
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model profil_tukang {
+  id                      Int       @id @default(autoincrement())
+  user_id                 Int       @unique
+  pengalaman_tahun        Int?      @default(0)
+  tarif_per_jam           Decimal?  @default(0) @db.Decimal(10, 2)
+  status_ketersediaan     String?   @default("tersedia") @db.VarChar(20)
+  radius_layanan_km       Int?      @default(10)
+  bio                     String?
+  keahlian                Json?     @db.Json
+  rata_rata_rating        Decimal?  @default(0.00) @db.Decimal(3, 2)
+  total_rating            Int?      @default(0)
+  total_pekerjaan_selesai Int?      @default(0)
+  nama_bank               String?   @db.VarChar(100)
+  nomor_rekening          String?   @db.VarChar(50)
+  nama_pemilik_rekening   String?   @db.VarChar(255)
+  created_at              DateTime? @default(now()) @db.Timestamp(6)
+  updated_at              DateTime? @default(now()) @db.Timestamp(6)
+  users                   users     @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([status_ketersediaan], map: "idx_profil_tukang_ketersediaan")
+  @@index([rata_rata_rating], map: "idx_profil_tukang_rating")
+  @@schema("auth")
+}
+
+model roles {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique @db.VarChar(50)
+  description String?
+  is_active   Boolean?  @default(true)
+  created_at  DateTime? @default(now()) @db.Timestamp(6)
+  updated_at  DateTime? @default(now()) @db.Timestamp(6)
+  users       users[]
+
+  @@schema("auth")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model users {
+  id                                         Int                        @id @default(autoincrement())
+  username                                   String                     @unique @db.VarChar(50)
+  email                                      String                     @unique @db.VarChar(100)
+  no_telp                                    String?                    @db.VarChar(20)
+  password_hash                              String                     @db.VarChar(255)
+  nama_lengkap                               String?                    @db.VarChar(255)
+  foto_profil                                String?                    @db.VarChar(500)
+  alamat                                     String?
+  kota                                       String?                    @db.VarChar(100)
+  provinsi                                   String?                    @db.VarChar(100)
+  kode_pos                                   String?                    @db.VarChar(10)
+  poin                                       Int?                       @default(0)
+  is_active                                  Boolean?                   @default(true)
+  is_verified                                Boolean?                   @default(false)
+  id_role                                    Int
+  created_at                                 DateTime?                  @default(now()) @db.Timestamp(6)
+  updated_at                                 DateTime?                  @default(now()) @db.Timestamp(6)
+  jwt_blacklist                              jwt_blacklist[]
+  profil_tukang                              profil_tukang?
+  roles                                      roles                      @relation(fields: [id_role], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  kategori_tukang                            kategori_tukang[]
+  penarikan_penarikan_diproses_olehTousers   penarikan[]                @relation("penarikan_diproses_olehTousers")
+  penarikan_penarikan_tukang_idTousers       penarikan[]                @relation("penarikan_tukang_idTousers")
+  rating_rating_client_idTousers             rating[]                   @relation("rating_client_idTousers")
+  rating_rating_tukang_idTousers             rating[]                   @relation("rating_tukang_idTousers")
+  riwayat_status_transaksi                   riwayat_status_transaksi[]
+  topup_topup_diverifikasi_olehTousers       topup[]                    @relation("topup_diverifikasi_olehTousers")
+  topup_topup_user_idTousers                 topup[]                    @relation("topup_user_idTousers")
+  transaksi_transaksi_client_idTousers       transaksi[]                @relation("transaksi_client_idTousers")
+  transaksi_transaksi_dibatalkan_olehTousers transaksi[]                @relation("transaksi_dibatalkan_olehTousers")
+  transaksi_transaksi_tukang_idTousers       transaksi[]                @relation("transaksi_tukang_idTousers")
+
+  @@index([is_active], map: "idx_users_active")
+  @@index([email], map: "idx_users_email")
+  @@index([no_telp], map: "idx_users_no_telp")
+  @@index([id_role], map: "idx_users_role")
+  @@schema("auth")
+}
+
+model kategori {
+  id              Int               @id @default(autoincrement())
+  nama            String            @db.VarChar(255)
+  deskripsi       String?
+  is_active       Boolean?          @default(true)
+  created_at      DateTime?         @default(now()) @db.Timestamp(6)
+  updated_at      DateTime?         @default(now()) @db.Timestamp(6)
+  kategori_tukang kategori_tukang[]
+  transaksi       transaksi[]
+
+  @@schema("transaksi")
+}
+
+model kategori_tukang {
+  id          Int       @id @default(autoincrement())
+  tukang_id   Int
+  kategori_id Int
+  created_at  DateTime? @default(now()) @db.Timestamp(6)
+  kategori    kategori  @relation(fields: [kategori_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users       users     @relation(fields: [tukang_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([tukang_id, kategori_id])
+  @@schema("transaksi")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model penarikan {
+  id                                   Int       @id @default(autoincrement())
+  tukang_id                            Int
+  jumlah                               Decimal   @db.Decimal(12, 2)
+  nama_bank                            String    @db.VarChar(100)
+  nomor_rekening                       String    @db.VarChar(50)
+  nama_pemilik_rekening                String    @db.VarChar(255)
+  biaya_admin                          Decimal?  @default(0) @db.Decimal(10, 2)
+  jumlah_bersih                        Decimal   @db.Decimal(12, 2)
+  status                               String?   @default("pending") @db.VarChar(20)
+  diproses_oleh                        Int?
+  waktu_diproses                       DateTime? @db.Timestamp(6)
+  alasan_penolakan                     String?
+  bukti_transfer                       String?   @db.VarChar(500)
+  created_at                           DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                           DateTime? @default(now()) @db.Timestamp(6)
+  users_penarikan_diproses_olehTousers users?    @relation("penarikan_diproses_olehTousers", fields: [diproses_oleh], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_penarikan_tukang_idTousers     users     @relation("penarikan_tukang_idTousers", fields: [tukang_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([tukang_id, status], map: "idx_penarikan_tukang_status")
+  @@schema("transaksi")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model rating {
+  id                            Int       @id @default(autoincrement())
+  transaksi_id                  Int       @unique
+  client_id                     Int
+  tukang_id                     Int
+  rating                        Int
+  ulasan                        String?
+  created_at                    DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                    DateTime? @default(now()) @db.Timestamp(6)
+  users_rating_client_idTousers users     @relation("rating_client_idTousers", fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  transaksi                     transaksi @relation(fields: [transaksi_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_rating_tukang_idTousers users     @relation("rating_tukang_idTousers", fields: [tukang_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([tukang_id], map: "idx_rating_tukang")
+  @@schema("transaksi")
+}
+
+model riwayat_status_transaksi {
+  id           Int       @id @default(autoincrement())
+  transaksi_id Int
+  status_dari  String?   @db.VarChar(20)
+  status_ke    String    @db.VarChar(20)
+  diubah_oleh  Int?
+  keterangan   String?
+  created_at   DateTime? @default(now()) @db.Timestamp(6)
+  users        users?    @relation(fields: [diubah_oleh], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  transaksi    transaksi @relation(fields: [transaksi_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@schema("transaksi")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model topup {
+  id                                   Int       @id @default(autoincrement())
+  user_id                              Int
+  jumlah                               Decimal   @db.Decimal(12, 2)
+  metode_pembayaran                    String?   @default("qris") @db.VarChar(20)
+  bukti_pembayaran                     String    @db.VarChar(500)
+  status                               String?   @default("pending") @db.VarChar(20)
+  diverifikasi_oleh                    Int?
+  waktu_verifikasi                     DateTime? @db.Timestamp(6)
+  alasan_penolakan                     String?
+  kadaluarsa_pada                      DateTime? @db.Timestamp(6)
+  created_at                           DateTime? @default(now()) @db.Timestamp(6)
+  updated_at                           DateTime? @default(now()) @db.Timestamp(6)
+  users_topup_diverifikasi_olehTousers users?    @relation("topup_diverifikasi_olehTousers", fields: [diverifikasi_oleh], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  users_topup_user_idTousers           users     @relation("topup_user_idTousers", fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([status], map: "idx_topup_status")
+  @@index([user_id, status], map: "idx_topup_user_status")
+  @@schema("transaksi")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model or at least one of its fields has comments in the database, and requires an additional setup for migrations: Read more: https://pris.ly/d/database-comments
+model transaksi {
+  id                                     Int                        @id @default(autoincrement())
+  nomor_pesanan                          String                     @unique @db.VarChar(50)
+  client_id                              Int
+  tukang_id                              Int
+  kategori_id                            Int?
+  judul_layanan                          String                     @db.VarChar(255)
+  deskripsi_layanan                      String?
+  lokasi_kerja                           String
+  tanggal_jadwal                         DateTime                   @db.Date
+  waktu_jadwal                           DateTime                   @db.Time(6)
+  estimasi_durasi_jam                    Int?                       @default(1)
+  waktu_mulai_aktual                     DateTime?                  @db.Timestamp(6)
+  waktu_selesai_aktual                   DateTime?                  @db.Timestamp(6)
+  harga_dasar                            Decimal                    @db.Decimal(12, 2)
+  biaya_tambahan                         Decimal?                   @default(0) @db.Decimal(12, 2)
+  total_biaya                            Decimal                    @db.Decimal(12, 2)
+  metode_pembayaran                      String                     @db.VarChar(15)
+  poin_terpotong                         Boolean?                   @default(false)
+  sudah_dibayar_tunai                    Boolean?                   @default(false)
+  waktu_konfirmasi_pembayaran_tunai      DateTime?                  @db.Timestamp(6)
+  status                                 String?                    @default("pending") @db.VarChar(20)
+  alasan_pembatalan                      String?
+  alasan_penolakan                       String?
+  dibatalkan_oleh                        Int?
+  catatan_client                         String?
+  catatan_tukang                         String?
+  waktu_diterima                         DateTime?                  @db.Timestamp(6)
+  waktu_ditolak                          DateTime?                  @db.Timestamp(6)
+  waktu_mulai                            DateTime?                  @db.Timestamp(6)
+  waktu_selesai                          DateTime?                  @db.Timestamp(6)
+  waktu_dibatalkan                       DateTime?                  @db.Timestamp(6)
+  created_at                             DateTime?                  @default(now()) @db.Timestamp(6)
+  updated_at                             DateTime?                  @default(now()) @db.Timestamp(6)
+  rating                                 rating?
+  riwayat_status_transaksi               riwayat_status_transaksi[]
+  users_transaksi_client_idTousers       users                      @relation("transaksi_client_idTousers", fields: [client_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  users_transaksi_dibatalkan_olehTousers users?                     @relation("transaksi_dibatalkan_olehTousers", fields: [dibatalkan_oleh], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  kategori                               kategori?                  @relation(fields: [kategori_id], references: [id], onUpdate: NoAction)
+  users_transaksi_tukang_idTousers       users                      @relation("transaksi_tukang_idTousers", fields: [tukang_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([client_id], map: "idx_transaksi_client")
+  @@index([created_at], map: "idx_transaksi_created")
+  @@index([metode_pembayaran], map: "idx_transaksi_metode_pembayaran")
+  @@index([status], map: "idx_transaksi_status")
+  @@index([tanggal_jadwal], map: "idx_transaksi_tanggal")
+  @@index([tukang_id], map: "idx_transaksi_tukang")
+  @@schema("transaksi")
+}
