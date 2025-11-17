@@ -19,30 +19,30 @@ const deleteOldFile = (dbPath) => {
 exports.getTukangProfile = async (req, res) => {
   try {
     const userId = req.user.id;
-    const user = await prisma.user.findUnique({
+    const user = await prisma.users.findUnique({
       where: { id: userId },
       include: {
-        tukangProfile: {
+        profil_tukang: true,
+        kategori_tukang: {
           include: {
-            kategori: true, // Ambil kategori keahlian
+            kategori: true,
           },
         },
       },
     });
 
-    if (!user || !user.tukangProfile) {
+    if (!user || !user.profil_tukang) {
       return sendResponse(res, 404, 'error', 'Profil tukang tidak ditemukan');
     }
 
-    delete user.password;
+    delete user.password_hash;
     
     // Gabungkan data
     const data = {
       ...user,
-      profil_tukang: user.tukangProfile,
-      kategori: user.tukangProfile.kategori,
+      profil_tukang: user.profil_tukang,
+      kategori: user.kategori_tukang.map(kt => kt.kategori),
     };
-    delete data.tukangProfile; // Hapus duplikat
 
     sendResponse(res, 200, 'success', 'Data profil tukang berhasil diambil', data);
   } catch (error) {
@@ -80,9 +80,19 @@ exports.updateTukangProfile = async (req, res) => {
     // 3. Handle Kategori (jika ada)
     if (data.kategori_ids) {
        const ids = Array.isArray(data.kategori_ids) ? data.kategori_ids : data.kategori_ids.split(',').map(id => parseInt(id.trim()));
-       profilData.kategori = {
-         set: ids.map(id => ({ id: id })) // 'set' akan mengganti semua kategori lama
-       };
+       // Hapus kategori lama
+       await prisma.kategori_tukang.deleteMany({
+         where: { tukang_id: userId }
+       });
+       // Tambah kategori baru
+       for (const kategori_id of ids) {
+         await prisma.kategori_tukang.create({
+           data: {
+             tukang_id: userId,
+             kategori_id: kategori_id,
+           },
+         });
+       }
     }
     
     // 4. Handle File Upload
@@ -93,16 +103,17 @@ exports.updateTukangProfile = async (req, res) => {
     }
 
     // 5. Jalankan Update
-    // Kita bisa update keduanya sekaligus jika relasinya 1-to-1
-    await prisma.user.update({
+    await prisma.users.update({
       where: { id: userId },
-      data: {
-        ...userData,
-        tukangProfile: {
-          update: profilData,
-        },
-      },
+      data: userData,
     });
+    
+    if (Object.keys(profilData).length > 0) {
+      await prisma.profil_tukang.update({
+        where: { user_id: userId },
+        data: profilData,
+      });
+    }
 
     sendResponse(res, 200, 'success', 'Profil berhasil diperbarui');
   } catch (error) {
@@ -118,7 +129,7 @@ exports.getTukangCategories = async (req, res) => {
       where: { is_active: true },
       include: {
         _count: {
-          select: { tukangProfiles: true },
+          select: { kategori_tukang: true },
         },
       },
     });
@@ -127,7 +138,7 @@ exports.getTukangCategories = async (req, res) => {
       id: cat.id,
       nama: cat.nama,
       deskripsi: cat.deskripsi,
-      jumlah_tukang: cat._count.tukangProfiles,
+      jumlah_tukang: cat._count.kategori_tukang,
     }));
 
     sendResponse(res, 200, 'success', 'Kategori berhasil diambil', formattedCategories);
@@ -143,13 +154,13 @@ exports.updateAvailability = async (req, res) => {
     const { status_ketersediaan } = req.body;
     const userId = req.user.id;
 
-    if (!['TERSEDIA', 'TIDAK_TERSEDIA'].includes(status_ketersediaan.toUpperCase())) {
-      return sendResponse(res, 400, 'error', 'Status tidak valid. Gunakan TERSEDIA atau TIDAK_TERSEDIA');
+    if (!['tersedia', 'tidak_tersedia'].includes(status_ketersediaan)) {
+      return sendResponse(res, 400, 'error', 'Status tidak valid. Gunakan tersedia atau tidak_tersedia');
     }
 
-    await prisma.tukangProfile.update({
-      where: { userId: userId },
-      data: { status_ketersediaan: status_ketersediaan.toUpperCase() },
+    await prisma.profil_tukang.update({
+      where: { user_id: userId },
+      data: { status_ketersediaan: status_ketersediaan },
     });
 
     sendResponse(res, 200, 'success', 'Status ketersediaan berhasil diupdate');
@@ -164,16 +175,16 @@ exports.getOrders = async (req, res) => {
   try {
     const { status, metode_pembayaran, limit, offset } = req.query;
     const where = {
-      tukangId: req.user.id,
+      tukang_id: req.user.id,
     };
 
-    if (status) where.status = status.toUpperCase();
-    if (metode_pembayaran) where.metode_pembayaran = metode_pembayaran.toUpperCase();
+    if (status) where.status = status;
+    if (metode_pembayaran) where.metode_pembayaran = metode_pembayaran;
 
     const orders = await prisma.transaksi.findMany({
       where,
       include: {
-        client: { select: { nama_lengkap: true, foto_profil: true, no_telp: true } },
+        users_transaksi_client_idTousers: { select: { nama_lengkap: true, foto_profil: true, no_telp: true } },
         kategori: { select: { nama: true } },
       },
       orderBy: { created_at: 'desc' },
@@ -184,10 +195,10 @@ exports.getOrders = async (req, res) => {
     // Format data agar sesuai dokumen
     const formatted = orders.map(t => ({
       ...t,
-      nama_client: t.client.nama_lengkap,
-      foto_client: t.client.foto_profil,
-      no_telp_client: t.client.no_telp,
-      nama_kategori: t.kategori.nama,
+      nama_client: t.users_transaksi_client_idTousers.nama_lengkap,
+      foto_client: t.users_transaksi_client_idTousers.foto_profil,
+      no_telp_client: t.users_transaksi_client_idTousers.no_telp,
+      nama_kategori: t.kategori?.nama,
     }));
 
     sendResponse(res, 200, 'success', 'Data pesanan berhasil diambil', formatted);
@@ -204,10 +215,10 @@ exports.getOrderDetail = async (req, res) => {
     const order = await prisma.transaksi.findFirst({
       where: {
         id: parseInt(transaksi_id),
-        tukangId: req.user.id, // Pastikan milik tukang
+        tukang_id: req.user.id,
       },
       include: {
-        client: { select: { nama_lengkap: true, foto_profil: true, no_telp: true, alamat: true } },
+        users_transaksi_client_idTousers: { select: { nama_lengkap: true, foto_profil: true, no_telp: true, alamat: true } },
         kategori: { select: { nama: true } },
         rating: true,
       },
@@ -219,10 +230,10 @@ exports.getOrderDetail = async (req, res) => {
 
     const data = {
       ...order,
-      nama_client: order.client.nama_lengkap,
-      foto_client: order.client.foto_profil,
-      no_telp_client: order.client.no_telp,
-      nama_kategori: order.kategori.nama,
+      nama_client: order.users_transaksi_client_idTousers.nama_lengkap,
+      foto_client: order.users_transaksi_client_idTousers.foto_profil,
+      no_telp_client: order.users_transaksi_client_idTousers.no_telp,
+      nama_kategori: order.kategori?.nama,
     };
 
     sendResponse(res, 200, 'success', 'Detail pesanan berhasil diambil', data);
@@ -237,7 +248,7 @@ const updateOrderStatus = async (transaksiId, tukangId, currentStatus, newStatus
   const result = await prisma.transaksi.updateMany({
     where: {
       id: parseInt(transaksiId),
-      tukangId: tukangId,
+      tukang_id: tukangId,
       status: currentStatus,
     },
     data: {
@@ -245,14 +256,14 @@ const updateOrderStatus = async (transaksiId, tukangId, currentStatus, newStatus
       ...data
     },
   });
-  return result.count > 0; // true jika berhasil update, false jika tidak
+  return result.count > 0;
 };
 
 // 26. ACCEPT ORDER
 exports.acceptOrder = async (req, res) => {
   try {
     const { transaksi_id } = req.params;
-    const updated = await updateOrderStatus(transaksi_id, req.user.id, 'PENDING', 'DITERIMA', {
+    const updated = await updateOrderStatus(transaksi_id, req.user.id, 'pending', 'diterima', {
       waktu_diterima: new Date()
     });
 
@@ -277,15 +288,15 @@ exports.rejectOrder = async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       // 1. Dapatkan transaksi
       const transaction = await tx.transaksi.findFirst({
-        where: { id: parseInt(transaksi_id), tukangId: tukangId },
+        where: { id: parseInt(transaksi_id), tukang_id: tukangId },
       });
 
       if (!transaction) {
         throw new Error('Transaksi tidak ditemukan');
       }
 
-      // 2. Hanya bisa reject jika PENDING
-      if (transaction.status !== 'PENDING') {
+      // 2. Hanya bisa reject jika pending
+      if (transaction.status !== 'pending') {
         throw new Error('Hanya pesanan pending yang bisa ditolak');
       }
 
@@ -293,16 +304,17 @@ exports.rejectOrder = async (req, res) => {
       await tx.transaksi.update({
         where: { id: transaction.id },
         data: {
-          status: 'DITOLAK',
+          status: 'ditolak',
           alasan_penolakan: alasan_penolakan || 'Ditolak oleh tukang',
+          waktu_ditolak: new Date(),
         },
       });
 
       // 4. Kembalikan Poin jika terpotong
       if (transaction.poin_terpotong) {
-        await tx.user.update({
-          where: { id: transaction.clientId },
-          data: { poin: { increment: transaction.total_biaya } },
+        await tx.users.update({
+          where: { id: transaction.client_id },
+          data: { poin: { increment: parseFloat(transaction.total_biaya) } },
         });
       }
       return true;
@@ -326,7 +338,7 @@ exports.rejectOrder = async (req, res) => {
 exports.startWork = async (req, res) => {
   try {
     const { transaksi_id } = req.params;
-    const updated = await updateOrderStatus(transaksi_id, req.user.id, 'DITERIMA', 'DALAM_PROSES', {
+    const updated = await updateOrderStatus(transaksi_id, req.user.id, 'diterima', 'dalam_proses', {
       waktu_mulai: new Date()
     });
 
@@ -351,15 +363,15 @@ exports.completeWork = async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       // 1. Dapatkan transaksi
       const transaction = await tx.transaksi.findFirst({
-        where: { id: parseInt(transaksi_id), tukangId: tukangId },
+        where: { id: parseInt(transaksi_id), tukang_id: tukangId },
       });
 
       if (!transaction) {
         throw new Error('Transaksi tidak ditemukan');
       }
 
-      // 2. Hanya bisa complete jika DALAM_PROSES
-      if (transaction.status !== 'DALAM_PROSES') {
+      // 2. Hanya bisa complete jika dalam_proses
+      if (transaction.status !== 'dalam_proses') {
         throw new Error('Hanya pesanan dalam proses yang bisa diselesaikan');
       }
 
@@ -367,17 +379,17 @@ exports.completeWork = async (req, res) => {
       await tx.transaksi.update({
         where: { id: transaction.id },
         data: {
-          status: 'SELESAI',
+          status: 'selesai',
           catatan_tukang: catatan_tukang,
           waktu_selesai: new Date()
         },
       });
 
-      // 4. Transfer Poin ke Tukang jika metode POIN
+      // 4. Transfer Poin ke Tukang jika metode poin
       let poinDiterima = 0;
-      if (transaction.metode_pembayaran === 'POIN') {
-        poinDiterima = transaction.total_biaya;
-        await tx.user.update({
+      if (transaction.metode_pembayaran === 'poin') {
+        poinDiterima = parseFloat(transaction.total_biaya);
+        await tx.users.update({
           where: { id: tukangId },
           data: { poin: { increment: poinDiterima } },
         });
@@ -407,12 +419,13 @@ exports.confirmTunaiPayment = async (req, res) => {
     const updated = await prisma.transaksi.updateMany({
       where: {
         id: parseInt(transaksi_id),
-        tukangId: req.user.id,
-        metode_pembayaran: 'TUNAI',
-        status: 'SELESAI',
+        tukang_id: req.user.id,
+        metode_pembayaran: 'tunai',
+        status: 'selesai',
       },
       data: {
-        sudah_dibayar_tunai: true
+        sudah_dibayar_tunai: true,
+        waktu_konfirmasi_pembayaran_tunai: new Date()
       },
     });
 
@@ -433,9 +446,9 @@ exports.getRatings = async (req, res) => {
     const tukangId = req.user.id;
     
     const ratings = await prisma.rating.findMany({
-      where: { tukangId: tukangId },
+      where: { tukang_id: tukangId },
       include: {
-        client: { select: { nama_lengkap: true, foto_profil: true } }
+        users_rating_client_idTousers: { select: { nama_lengkap: true, foto_profil: true } }
       },
       orderBy: { created_at: 'desc' }
     });
@@ -443,11 +456,11 @@ exports.getRatings = async (req, res) => {
     // Ambil statistik
     const starCounts = await prisma.rating.groupBy({
        by: ['rating'],
-       where: { tukangId: tukangId },
+       where: { tukang_id: tukangId },
        _count: { rating: true },
     });
     const aggStats = await prisma.rating.aggregate({
-        where: { tukangId: tukangId },
+        where: { tukang_id: tukangId },
        _count: { rating: true },
        _avg: { rating: true }
     });
@@ -487,7 +500,7 @@ exports.requestWithdrawal = async (req, res) => {
   try {
     const result = await prisma.$transaction(async (tx) => {
       // 1. Cek saldo tukang
-      const tukang = await tx.user.findUnique({
+      const tukang = await tx.users.findUnique({
         where: { id: tukangId },
         select: { poin: true }
       });
@@ -497,28 +510,28 @@ exports.requestWithdrawal = async (req, res) => {
       }
       
       // 2. Hitung fee (2%, max 5000)
-      let fee = jumlahRequest * 0.02;
-      if (fee > 5000) fee = 5000;
+      let biaya_admin = jumlahRequest * 0.02;
+      if (biaya_admin > 5000) biaya_admin = 5000;
       
-      const jumlahDiterima = jumlahRequest - fee;
+      const jumlah_bersih = jumlahRequest - biaya_admin;
       
       // 3. Potong saldo tukang
-      await tx.user.update({
+      await tx.users.update({
         where: { id: tukangId },
         data: { poin: { decrement: jumlahRequest } }
       });
       
       // 4. Buat record withdrawal
-      const withdrawal = await tx.withdrawal.create({
+      const withdrawal = await tx.penarikan.create({
         data: {
-          tukangId: tukangId,
+          tukang_id: tukangId,
           jumlah: jumlahRequest,
-          fee: fee,
-          jumlah_diterima: jumlahDiterima,
+          biaya_admin: biaya_admin,
+          jumlah_bersih: jumlah_bersih,
           nama_bank: nama_bank,
           nomor_rekening: nomor_rekening,
           nama_pemilik_rekening: nama_pemilik_rekening,
-          status: 'PENDING'
+          status: 'pending'
         }
       });
       
@@ -528,8 +541,8 @@ exports.requestWithdrawal = async (req, res) => {
     sendResponse(res, 201, 'success', 'Request penarikan berhasil dibuat', {
         withdrawal_id: result.id,
         jumlah: result.jumlah,
-        fee: result.fee,
-        jumlah_diterima: result.jumlah_diterima,
+        biaya_admin: result.biaya_admin,
+        jumlah_bersih: result.jumlah_bersih,
         status: result.status
     });
     
@@ -548,12 +561,12 @@ exports.getWithdrawalHistory = async (req, res) => {
   try {
     const { status, limit, offset } = req.query;
     const where = {
-      tukangId: req.user.id,
+      tukang_id: req.user.id,
     };
 
-    if (status) where.status = status.toUpperCase();
+    if (status) where.status = status;
 
-    const withdrawals = await prisma.withdrawal.findMany({
+    const withdrawals = await prisma.penarikan.findMany({
       where,
       orderBy: { created_at: 'desc' },
       take: parseInt(limit) || 10,
@@ -573,30 +586,30 @@ exports.getTukangStatistics = async (req, res) => {
     const tukangId = req.user.id;
 
     // 1. Ambil data user & profil
-    const profil = await prisma.tukangProfile.findUnique({
-      where: { userId: tukangId },
+    const profil = await prisma.profil_tukang.findUnique({
+      where: { user_id: tukangId },
       select: { total_pekerjaan_selesai: true, rata_rata_rating: true, total_rating: true }
     });
 
     // 2. Statistik Transaksi
     const trxStats = await prisma.transaksi.groupBy({
       by: ['status'],
-      where: { tukangId: tukangId },
+      where: { tukang_id: tukangId },
       _count: { status: true },
     });
     const totalPendapatan = await prisma.transaksi.aggregate({
-        where: { tukangId: tukangId, status: 'SELESAI', metode_pembayaran: 'POIN' }, // Hanya hitung dari POIN
+        where: { tukang_id: tukangId, status: 'selesai', metode_pembayaran: 'poin' },
         _sum: { total_biaya: true },
     });
     
     // 3. Statistik Penarikan
-    const penarikanStats = await prisma.withdrawal.groupBy({
+    const penarikanStats = await prisma.penarikan.groupBy({
       by: ['status'],
-      where: { tukangId: tukangId },
+      where: { tukang_id: tukangId },
       _count: { status: true },
     });
-     const totalDitarik = await prisma.withdrawal.aggregate({
-        where: { tukangId: tukangId, status: 'SELESAI' },
+     const totalDitarik = await prisma.penarikan.aggregate({
+        where: { tukang_id: tukangId, status: 'selesai' },
         _sum: { jumlah: true },
     });
 

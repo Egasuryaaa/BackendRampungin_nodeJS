@@ -68,7 +68,7 @@ exports.updateClientProfile = async (req, res) => {
     }
 
     // 4. Update database
-    const updatedUser = await prisma.user.update({
+    const updatedUser = await prisma.users.update({
       where: { id: userId },
       data: updateData,
     });
@@ -87,7 +87,7 @@ exports.getCategories = async (req, res) => {
       where: { is_active: true },
       include: {
         _count: {
-          select: { tukangProfiles: true },
+          select: { kategori_tukang: true },
         },
       },
     });
@@ -97,7 +97,7 @@ exports.getCategories = async (req, res) => {
       id: cat.id,
       nama: cat.nama,
       deskripsi: cat.deskripsi,
-      jumlah_tukang: cat._count.tukangProfiles,
+      jumlah_tukang: cat._count.kategori_tukang,
     }));
 
     sendResponse(res, 200, 'success', 'Data kategori berhasil diambil', formattedCategories);
@@ -115,36 +115,42 @@ exports.browseTukang = async (req, res) => {
       max_tarif, order_by, order_dir, limit, offset
     } = req.query;
 
+    // Cari role tukang
+    const tukangRole = await prisma.roles.findFirst({ where: { name: 'tukang' } });
+    
     const where = {
-      role: 'TUKANG',
+      id_role: tukangRole?.id || 3,
       is_verified: true,
       is_active: true,
-      tukangProfile: {
-        status_ketersediaan: status ? status.toUpperCase() : 'TERSEDIA',
+      profil_tukang: {
+        status_ketersediaan: status || 'tersedia',
       },
     };
 
     if (kota) where.kota = kota;
-    if (kategori_id) where.tukangProfile.kategori = { some: { id: parseInt(kategori_id) } };
-    if (min_rating) where.tukangProfile.rata_rata_rating = { gte: parseFloat(min_rating) }; // Perlu update skema untuk ini
-    if (max_tarif) where.tukangProfile.tarif_per_jam = { lte: parseFloat(max_tarif) };
+    if (kategori_id) {
+      where.kategori_tukang = {
+        some: { kategori_id: parseInt(kategori_id) }
+      };
+    }
+    if (min_rating) where.profil_tukang.rata_rata_rating = { gte: parseFloat(min_rating) };
+    if (max_tarif) where.profil_tukang.tarif_per_jam = { lte: parseFloat(max_tarif) };
 
-    // Note: 'rata_rata_rating' dan 'total_pekerjaan_selesai' ada di TukangProfile
     const orderByClause = {};
     const validOrderBy = ['tarif_per_jam', 'pengalaman_tahun', 'rata_rata_rating'];
     const orderByField = validOrderBy.includes(order_by) ? order_by : 'rata_rata_rating';
     
-    if (['tarif_per_jam', 'pengalaman_tahun'].includes(orderByField)) {
-        orderByClause.tukangProfile = { [orderByField]: order_dir || 'desc' };
+    if (['tarif_per_jam', 'pengalaman_tahun', 'rata_rata_rating'].includes(orderByField)) {
+        orderByClause.profil_tukang = { [orderByField]: order_dir || 'desc' };
     }
-    // TODO: Tambahkan 'rata_rata_rating' ke skema TukangProfile jika ingin di-sort
 
-    const tukangs = await prisma.user.findMany({
+    const tukangs = await prisma.users.findMany({
       where,
       include: {
-        tukangProfile: {
+        profil_tukang: true,
+        kategori_tukang: {
           include: {
-            kategori: true, // Ambil kategori
+            kategori: true,
           },
         },
       },
@@ -155,14 +161,15 @@ exports.browseTukang = async (req, res) => {
 
     // Format data agar sesuai dokumen
     const formattedTukangs = tukangs.map(t => ({
-      id: t.tukangProfile.id, // ID Profil Tukang
+      id: t.profil_tukang?.id,
       user_id: t.id,
       nama_lengkap: t.nama_lengkap,
       foto_profil: t.foto_profil,
       no_telp: t.no_telp,
       kota: t.kota,
       provinsi: t.provinsi,
-      ...t.tukangProfile
+      ...t.profil_tukang,
+      kategori: t.kategori_tukang.map(kt => kt.kategori)
     }));
 
     sendResponse(res, 200, 'success', 'Data tukang berhasil diambil', formattedTukangs);
@@ -175,33 +182,41 @@ exports.browseTukang = async (req, res) => {
 // 10. GET TUKANG DETAIL
 exports.getTukangDetail = async (req, res) => {
   try {
-    const { tukang_id } = req.params; // Ini adalah ID Profil Tukang
+    const { tukang_id } = req.params; // Ini adalah user_id tukang
 
-    const profilTukang = await prisma.tukangProfile.findUnique({
-      where: { id: parseInt(tukang_id) },
+    const tukangRole = await prisma.roles.findFirst({ where: { name: 'tukang' } });
+    const user = await prisma.users.findFirst({
+      where: { 
+        id: parseInt(tukang_id),
+        id_role: tukangRole?.id || 3
+      },
       include: {
-        user: true, // Ambil data user
-        kategori: true, // Ambil kategori
+        profil_tukang: true,
+        kategori_tukang: {
+          include: {
+            kategori: true,
+          },
+        },
       },
     });
 
-    if (!profilTukang || profilTukang.user.role !== 'TUKANG') {
+    if (!user || !user.profil_tukang) {
       return sendResponse(res, 404, 'error', 'Tukang tidak ditemukan');
     }
 
-    const tukangUserId = profilTukang.userId;
+    const tukangUserId = user.id;
 
     // Ambil ratings & stats
     const ratings = await prisma.rating.findMany({
-      where: { tukangId: tukangUserId },
+      where: { tukang_id: tukangUserId },
       include: {
-        client: { select: { nama_lengkap: true, foto_profil: true } }
+        users_rating_client_idTousers: { select: { nama_lengkap: true, foto_profil: true } }
       },
       orderBy: { created_at: 'desc' }
     });
 
     const ratingStatsRaw = await prisma.rating.aggregate({
-      where: { tukangId: tukangUserId },
+      where: { tukang_id: tukangUserId },
       _count: { rating: true },
       _avg: { rating: true },
     });
@@ -209,7 +224,7 @@ exports.getTukangDetail = async (req, res) => {
     // Ambil hitungan per bintang
     const starCounts = await prisma.rating.groupBy({
        by: ['rating'],
-       where: { tukangId: tukangUserId },
+       where: { tukang_id: tukangUserId },
        _count: { rating: true },
     });
 
@@ -225,19 +240,17 @@ exports.getTukangDetail = async (req, res) => {
 
     // Format data gabungan
     const data = {
-      ...profilTukang.user,
-      ...profilTukang,
-      id: profilTukang.id, // ID profil tukang
-      user_id: profilTukang.userId,
+      ...user,
+      profil_tukang: user.profil_tukang,
+      kategori: user.kategori_tukang.map(kt => kt.kategori),
       ratings: ratings.map(r => ({
         ...r,
-        nama_client: r.client.nama_lengkap,
-        foto_client: r.client.foto_profil,
+        nama_client: r.users_rating_client_idTousers.nama_lengkap,
+        foto_client: r.users_rating_client_idTousers.foto_profil,
       })),
       rating_stats,
     };
-    delete data.user; // Hapus data user duplikat
-    delete data.password; // Hapus password
+    delete data.password_hash;
 
     sendResponse(res, 200, 'success', 'Detail tukang berhasil diambil', data);
   } catch (error) {
@@ -255,24 +268,29 @@ exports.searchTukang = async (req, res) => {
        return sendResponse(res, 400, 'error', 'Keyword wajib diisi');
     }
 
+    const tukangRole = await prisma.roles.findFirst({ where: { name: 'tukang' } });
     const where = {
-      role: 'TUKANG',
+      id_role: tukangRole?.id || 3,
       is_verified: true,
       is_active: true,
       OR: [
         { nama_lengkap: { contains: keyword, mode: 'insensitive' } },
-        { tukangProfile: { bio: { contains: keyword, mode: 'insensitive' } } },
-        { tukangProfile: { keahlian: { has: keyword } } },
+        { profil_tukang: { bio: { contains: keyword, mode: 'insensitive' } } },
       ],
     };
 
     if (kota) where.kota = kota;
-    if (kategori_id) where.tukangProfile.kategori = { some: { id: parseInt(kategori_id) } };
+    if (kategori_id) {
+      where.kategori_tukang = {
+        some: { kategori_id: parseInt(kategori_id) }
+      };
+    }
     
-    const tukangs = await prisma.user.findMany({
+    const tukangs = await prisma.users.findMany({
       where,
       include: {
-        tukangProfile: {
+        profil_tukang: true,
+        kategori_tukang: {
           include: {
             kategori: true,
           },
@@ -284,12 +302,13 @@ exports.searchTukang = async (req, res) => {
     
     // Format data
      const formattedTukangs = tukangs.map(t => ({
-      id: t.tukangProfile.id,
+      id: t.profil_tukang?.id,
       user_id: t.id,
       nama_lengkap: t.nama_lengkap,
       foto_profil: t.foto_profil,
       kota: t.kota,
-      ...t.tukangProfile
+      ...t.profil_tukang,
+      kategori: t.kategori_tukang.map(kt => kt.kategori)
     }));
 
     sendResponse(res, 200, 'success', 'Hasil pencarian tukang', formattedTukangs);
@@ -314,8 +333,8 @@ exports.createBooking = async (req, res) => {
   try {
     const result = await prisma.$transaction(async (tx) => {
       // 1. Cek Saldo Klien jika bayar pakai POIN
-      if (data.metode_pembayaran === 'POIN') {
-        const client = await tx.user.findUnique({
+      if (data.metode_pembayaran === 'poin') {
+        const client = await tx.users.findUnique({
           where: { id: clientId },
           select: { poin: true },
         });
@@ -325,7 +344,7 @@ exports.createBooking = async (req, res) => {
         }
 
         // 2. Potong Poin Klien
-        await tx.user.update({
+        await tx.users.update({
           where: { id: clientId },
           data: { poin: { decrement: total_biaya } },
         });
@@ -334,23 +353,23 @@ exports.createBooking = async (req, res) => {
       // 3. Buat Transaksi
       const newTransaksi = await tx.transaksi.create({
         data: {
-          clientId: clientId,
-          tukangId: parseInt(data.tukang_id), // Pastikan ini user_id tukang, bukan profil_id
-          kategoriId: parseInt(data.kategori_id),
+          client_id: clientId,
+          tukang_id: parseInt(data.tukang_id),
+          kategori_id: parseInt(data.kategori_id),
           nomor_pesanan: `TRX-${Date.now()}`,
           judul_layanan: data.judul_layanan,
           deskripsi_layanan: data.deskripsi_layanan,
           lokasi_kerja: data.lokasi_kerja,
           tanggal_jadwal: new Date(data.tanggal_jadwal),
-          waktu_jadwal: data.waktu_jadwal,
-          estimasi_durasi_jam: data.estimasi_durasi_jam ? parseInt(data.estimasi_durasi_jam) : 0,
+          waktu_jadwal: new Date(`1970-01-01T${data.waktu_jadwal}`),
+          estimasi_durasi_jam: data.estimasi_durasi_jam ? parseInt(data.estimasi_durasi_jam) : 1,
           harga_dasar: parseFloat(data.harga_dasar),
           biaya_tambahan: parseFloat(data.biaya_tambahan) || 0,
           total_biaya: total_biaya,
-          metode_pembayaran: data.metode_pembayaran.toUpperCase(),
-          status: 'PENDING',
+          metode_pembayaran: data.metode_pembayaran,
+          status: 'pending',
           catatan_client: data.catatan_client,
-          poin_terpotong: data.metode_pembayaran === 'POIN',
+          poin_terpotong: data.metode_pembayaran === 'poin',
         },
       });
 
@@ -381,16 +400,16 @@ exports.getTransactions = async (req, res) => {
   try {
     const { status, metode_pembayaran, limit, offset } = req.query;
     const where = {
-      clientId: req.user.id,
+      client_id: req.user.id,
     };
 
-    if (status) where.status = status.toUpperCase();
-    if (metode_pembayaran) where.metode_pembayaran = metode_pembayaran.toUpperCase();
+    if (status) where.status = status;
+    if (metode_pembayaran) where.metode_pembayaran = metode_pembayaran;
 
     const transactions = await prisma.transaksi.findMany({
       where,
       include: {
-        tukang: { select: { nama_lengkap: true, foto_profil: true, no_telp: true } },
+        users_transaksi_tukang_idTousers: { select: { nama_lengkap: true, foto_profil: true, no_telp: true } },
         kategori: { select: { nama: true } },
       },
       orderBy: { created_at: 'desc' },
@@ -401,10 +420,10 @@ exports.getTransactions = async (req, res) => {
     // Format data agar sesuai dokumen
     const formatted = transactions.map(t => ({
       ...t,
-      nama_tukang: t.tukang.nama_lengkap,
-      foto_tukang: t.tukang.foto_profil,
-      no_telp_tukang: t.tukang.no_telp,
-      nama_kategori: t.kategori.nama,
+      nama_tukang: t.users_transaksi_tukang_idTousers.nama_lengkap,
+      foto_tukang: t.users_transaksi_tukang_idTousers.foto_profil,
+      no_telp_tukang: t.users_transaksi_tukang_idTousers.no_telp,
+      nama_kategori: t.kategori?.nama,
     }));
 
     sendResponse(res, 200, 'success', 'Data transaksi berhasil diambil', formatted);
@@ -421,12 +440,12 @@ exports.getTransactionDetail = async (req, res) => {
     const transaction = await prisma.transaksi.findFirst({
       where: {
         id: parseInt(transaksi_id),
-        clientId: req.user.id, // Pastikan milik user
+        client_id: req.user.id,
       },
       include: {
-        tukang: { select: { nama_lengkap: true, foto_profil: true, no_telp: true } },
+        users_transaksi_tukang_idTousers: { select: { nama_lengkap: true, foto_profil: true, no_telp: true } },
         kategori: { select: { nama: true } },
-        rating: true, // Ambil rating jika ada
+        rating: true,
       },
     });
 
@@ -437,10 +456,10 @@ exports.getTransactionDetail = async (req, res) => {
     // Format data
     const data = {
       ...transaction,
-      nama_tukang: transaction.tukang.nama_lengkap,
-      foto_tukang: transaction.tukang.foto_profil,
-      no_telp_tukang: transaction.tukang.no_telp,
-      nama_kategori: transaction.kategori.nama,
+      nama_tukang: transaction.users_transaksi_tukang_idTousers.nama_lengkap,
+      foto_tukang: transaction.users_transaksi_tukang_idTousers.foto_profil,
+      no_telp_tukang: transaction.users_transaksi_tukang_idTousers.no_telp,
+      nama_kategori: transaction.kategori?.nama,
     };
 
     sendResponse(res, 200, 'success', 'Detail transaksi berhasil diambil', data);
@@ -460,15 +479,15 @@ exports.cancelTransaction = async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       // 1. Dapatkan transaksi dan pastikan milik user
       const transaction = await tx.transaksi.findFirst({
-        where: { id: parseInt(transaksi_id), clientId: clientId },
+        where: { id: parseInt(transaksi_id), client_id: clientId },
       });
 
       if (!transaction) {
         throw new Error('Transaksi tidak ditemukan');
       }
 
-      // 2. Hanya bisa cancel jika PENDING atau DITERIMA
-      if (!['PENDING', 'DITERIMA'].includes(transaction.status)) {
+      // 2. Hanya bisa cancel jika pending atau diterima
+      if (!['pending', 'diterima'].includes(transaction.status)) {
         throw new Error('Transaksi tidak dapat dibatalkan');
       }
 
@@ -476,16 +495,18 @@ exports.cancelTransaction = async (req, res) => {
       await tx.transaksi.update({
         where: { id: transaction.id },
         data: {
-          status: 'DIBATALKAN',
+          status: 'dibatalkan',
           alasan_pembatalan: alasan_pembatalan || 'Dibatalkan oleh klien',
+          dibatalkan_oleh: clientId,
+          waktu_dibatalkan: new Date(),
         },
       });
 
       // 4. Kembalikan Poin jika terpotong
       let poinDikembalikan = 0;
       if (transaction.poin_terpotong) {
-        poinDikembalikan = transaction.total_biaya;
-        await tx.user.update({
+        poinDikembalikan = parseFloat(transaction.total_biaya);
+        await tx.users.update({
           where: { id: clientId },
           data: { poin: { increment: poinDikembalikan } },
         });
@@ -525,14 +546,14 @@ exports.requestTopup = async (req, res) => {
     // Path dari middleware 'uploadTopup'
     const buktiPath = file.path.replace(/\\/g, '/').replace('writable/', '');
 
-    const topup = await prisma.topUp.create({
+    const topup = await prisma.topup.create({
       data: {
-        clientId: req.user.id,
+        user_id: req.user.id,
         jumlah: parseFloat(jumlah),
         metode_pembayaran: 'qris',
         bukti_pembayaran: buktiPath,
-        status: 'PENDING',
-        kadaluarsa_pada: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 jam
+        status: 'pending',
+        kadaluarsa_pada: new Date(Date.now() + 24 * 60 * 60 * 1000),
       },
     });
 
@@ -553,12 +574,12 @@ exports.getTopupHistory = async (req, res) => {
   try {
     const { status, limit, offset } = req.query;
     const where = {
-      clientId: req.user.id,
+      user_id: req.user.id,
     };
 
-    if (status) where.status = status.toUpperCase();
+    if (status) where.status = status;
 
-    const topups = await prisma.topUp.findMany({
+    const topups = await prisma.topup.findMany({
       where,
       orderBy: { created_at: 'desc' },
       take: parseInt(limit) || 10,
@@ -586,21 +607,21 @@ exports.submitRating = async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       // 1. Cek transaksi
       const transaction = await tx.transaksi.findFirst({
-        where: { id: parseInt(transaksi_id), clientId: clientId },
+        where: { id: parseInt(transaksi_id), client_id: clientId },
       });
 
       if (!transaction) {
         throw new Error('Transaksi tidak ditemukan');
       }
 
-      // 2. Hanya bisa rating jika status 'SELESAI'
-      if (transaction.status !== 'SELESAI') {
+      // 2. Hanya bisa rating jika status 'selesai'
+      if (transaction.status !== 'selesai') {
         throw new Error('Hanya transaksi yang selesai yang bisa diberi rating');
       }
 
       // 3. Cek apakah sudah pernah dirating
       const existingRating = await tx.rating.findUnique({
-        where: { transaksiId: transaction.id },
+        where: { transaksi_id: transaction.id },
       });
 
       if (existingRating) {
@@ -610,36 +631,28 @@ exports.submitRating = async (req, res) => {
       // 4. Buat rating
       const newRating = await tx.rating.create({
         data: {
-          transaksiId: transaction.id,
-          clientId: clientId,
-          tukangId: transaction.tukangId,
+          transaksi_id: transaction.id,
+          client_id: clientId,
+          tukang_id: transaction.tukang_id,
           rating: parseInt(rating),
           ulasan: ulasan,
         },
       });
 
-      // 5. Update statistik rata-rata di profil tukang (Opsional tapi bagus)
-      // Ini adalah query yang rumit, kita agregat semua rating untuk tukang tsb
+      // 5. Update statistik rata-rata di profil tukang
       const stats = await tx.rating.aggregate({
-        where: { tukangId: transaction.tukangId },
+        where: { tukang_id: transaction.tukang_id },
         _avg: { rating: true },
         _count: { rating: true },
       });
 
-      await tx.tukangProfile.update({
-        where: { userId: transaction.tukangId },
+      await tx.profil_tukang.update({
+        where: { user_id: transaction.tukang_id },
         data: {
           rata_rata_rating: stats._avg.rating,
           total_rating: stats._count.rating,
+          total_pekerjaan_selesai: { increment: 1 }
         },
-      });
-      
-      // 6. Increment total_pekerjaan_selesai (sesuai file PHP Anda)
-      await tx.tukangProfile.update({
-         where: { userId: transaction.tukangId },
-         data: {
-            total_pekerjaan_selesai: { increment: 1 }
-         }
       });
 
       return newRating;
@@ -647,7 +660,7 @@ exports.submitRating = async (req, res) => {
 
     sendResponse(res, 201, 'success', 'Rating berhasil diberikan', {
       rating_id: result.id,
-      transaksi_id: result.transaksiId,
+      transaksi_id: result.transaksi_id,
       rating: result.rating,
     });
 
@@ -671,30 +684,30 @@ exports.getClientStatistics = async (req, res) => {
     // 1. Statistik Transaksi
     const trxStats = await prisma.transaksi.groupBy({
       by: ['status'],
-      where: { clientId: clientId },
+      where: { client_id: clientId },
       _count: { status: true },
     });
     
     const totalPengeluaran = await prisma.transaksi.aggregate({
-        where: { clientId: clientId, status: 'SELESAI' },
+        where: { client_id: clientId, status: 'selesai' },
         _sum: { total_biaya: true },
     });
 
     // 2. Statistik TopUp
-    const topupStats = await prisma.topUp.groupBy({
+    const topupStats = await prisma.topup.groupBy({
       by: ['status'],
-      where: { clientId: clientId },
+      where: { user_id: clientId },
       _count: { status: true },
     });
     
-     const totalTopup = await prisma.topUp.aggregate({
-        where: { clientId: clientId, status: 'BERHASIL' },
+     const totalTopup = await prisma.topup.aggregate({
+        where: { user_id: clientId, status: 'berhasil' },
         _sum: { jumlah: true },
     });
 
     // 3. Rating Diberikan
     const ratingCount = await prisma.rating.count({
-      where: { clientId: clientId },
+      where: { client_id: clientId },
     });
 
     // Format data
