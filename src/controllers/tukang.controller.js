@@ -190,6 +190,38 @@ exports.updateAvailability = async (req, res) => {
 };
 
 // 24. GET ORDERS
+// File: src/controllers/tukang.controller.js
+// ... (kode controller Anda yang lain tetap sama) ...
+
+// --- HELPER FUNCTION ---
+// Tambahkan fungsi helper ini di atas 'exports.getOrders' untuk format tanggal & waktu
+
+// Fungsi untuk format tanggal (YYYY-MM-DD)
+const formatDate = (date) => {
+  if (!date) return null;
+  // Objek Date dari Prisma mungkin perlu penyesuaian timezone, 
+  // tapi untuk YYYY-MM-DD, cara ini umumnya aman.
+  return new Date(date).toISOString().split('T')[0];
+};
+
+// Fungsi untuk format waktu (HH:mm:ss)
+const formatTime = (time) => {
+  if (!time) return null;
+  // Tipe 'Time' dari Prisma dikembalikan sebagai objek Date
+  // Kita ambil bagian waktunya saja
+  return new Date(time).toISOString().split('T')[1].split('.')[0];
+};
+
+// Fungsi untuk konversi boolean ke "t", "f", atau null
+const boolToString = (b) => {
+  if (b === true) return "t";
+  if (b === false) return "f";
+  return null; // Sesuai contoh Anda untuk "sudah_dibayar_tunai": null
+};
+
+// --- GANTI FUNGSI INI ---
+
+// 24. GET ORDERS
 exports.getOrders = async (req, res) => {
   try {
     const { status, metode_pembayaran, limit, offset } = req.query;
@@ -200,6 +232,7 @@ exports.getOrders = async (req, res) => {
     if (status) where.status = status;
     if (metode_pembayaran) where.metode_pembayaran = metode_pembayaran;
 
+    // 1. Query Database (Ini sudah benar)
     const orders = await prisma.transaksi.findMany({
       where,
       include: {
@@ -211,21 +244,61 @@ exports.getOrders = async (req, res) => {
       skip: parseInt(offset) || 0,
     });
     
-    // Format data agar sesuai dokumen
-    const formatted = orders.map(t => ({
-      ...t,
-      nama_client: t.users_transaksi_client_idTousers.nama_lengkap,
-      foto_client: t.users_transaksi_client_idTousers.foto_profil,
-      no_telp_client: t.users_transaksi_client_idTousers.no_telp,
-      nama_kategori: t.kategori?.nama,
-    }));
+    // 2. Pemetaan Data (Di sinilah perubahannya)
+    // Kita buat ulang objek secara manual agar sesuai format yang Anda minta
+    const formatted = orders.map(t => {
+      return {
+        "id": String(t.id), // Ubah jadi string
+        "nomor_pesanan": t.nomor_pesanan,
+        "client_id": String(t.client_id), // Ubah jadi string
+        "tukang_id": String(t.tukang_id), // Ubah jadi string
+        "kategori_id": t.kategori_id ? String(t.kategori_id) : null,
+        "judul_layanan": t.judul_layanan,
+        "deskripsi_layanan": t.deskripsi_layanan,
+        "lokasi_kerja": t.lokasi_kerja,
+        "tanggal_jadwal": formatDate(t.tanggal_jadwal), // Format YYYY-MM-DD
+        "waktu_jadwal": formatTime(t.waktu_jadwal),     // Format HH:mm:ss
+        "estimasi_durasi_jam": String(t.estimasi_durasi_jam), // Ubah jadi string
+        "waktu_mulai_aktual": t.waktu_mulai_aktual ? t.waktu_mulai_aktual.toISOString() : null,
+        "waktu_selesai_aktual": t.waktu_selesai_aktual ? t.waktu_selesai_aktual.toISOString() : null,
+        "harga_dasar": String(t.harga_dasar), // Ubah jadi string
+        "biaya_tambahan": String(t.biaya_tambahan), // Ubah jadi string
+        "total_biaya": String(t.total_biaya), // Ubah jadi string
+        "metode_pembayaran": t.metode_pembayaran,
+        "poin_terpotong": boolToString(t.poin_terpotong), // Ubah boolean ke "t"
+        "sudah_dibayar_tunai": boolToString(t.sudah_dibayar_tunai), // Ubah boolean (atau null)
+        "waktu_konfirmasi_pembayaran_tunai": t.waktu_konfirmasi_pembayaran_tunai ? t.waktu_konfirmasi_pembayaran_tunai.toISOString() : null,
+        "status": t.status,
+        "alasan_pembatalan": t.alasan_pembatalan,
+        "alasan_penolakan": t.alasan_penolakan,
+        "dibatalkan_oleh": t.dibatalkan_oleh ? String(t.dibatalkan_oleh) : null,
+        "catatan_client": t.catatan_client,
+        "catatan_tukang": t.catatan_tukang,
+        "waktu_diterima": t.waktu_diterima ? t.waktu_diterima.toISOString() : null,
+        "waktu_ditolak": t.waktu_ditolak ? t.waktu_ditolak.toISOString() : null,
+        "waktu_mulai": t.waktu_mulai ? t.waktu_mulai.toISOString() : null,
+        "waktu_selesai": t.waktu_selesai ? t.waktu_selesai.toISOString() : null,
+        "waktu_dibatalkan": t.waktu_dibatalkan ? t.waktu_dibatalkan.toISOString() : null,
+        "created_at": t.created_at ? t.created_at.toISOString() : null,
+        "updated_at": t.updated_at ? t.updated_at.toISOString() : null,
+        
+        // Data tambahan dari relasi
+        "nama_client": t.users_transaksi_client_idTousers.nama_lengkap,
+        "foto_client": t.users_transaksi_client_idTousers.foto_profil,
+        "no_telp_client": t.users_transaksi_client_idTousers.no_telp,
+        "nama_kategori": t.kategori?.nama || null
+      };
+    });
 
+    // 3. Kirim Respons
     sendResponse(res, 200, 'success', 'Data pesanan berhasil diambil', formatted);
   } catch (error) {
     console.error('getOrders error:', error);
     sendResponse(res, 500, 'error', 'Internal Server Error', error.message);
   }
 };
+
+// ... (sisa controller Anda) ...
 
 // 25. GET ORDER DETAIL
 exports.getOrderDetail = async (req, res) => {

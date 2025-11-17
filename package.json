@@ -6,7 +6,6 @@
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "// ----- Tambahkan Skrip Prisma di Bawah Ini ----- //": "",
     "prisma:generate": "dotenv -e .env -- npx prisma generate",
     "prisma:migrate": "dotenv -e .env -- npx prisma migrate dev",
     "prisma:studio": "dotenv -e .env -- npx prisma studio",

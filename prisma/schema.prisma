@@ -1,5 +1,12 @@
 generator client {
   provider = "prisma-client-js"
+  // Pastikan path output Anda masih ada
+  output   = "../src/generated/client" 
+  
+  // UBAH/TAMBAHKAN BARIS INI:
+  // "native" adalah untuk Windows Anda
+  // "debian-openssl-1.1.x" adalah untuk server cPanel Anda (dari log error)
+  binaryTargets = ["native", "debian-openssl-1.1.x"] 
 }
 
 datasource db {
