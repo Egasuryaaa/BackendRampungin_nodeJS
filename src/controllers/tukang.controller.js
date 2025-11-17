@@ -16,9 +16,15 @@ const deleteOldFile = (dbPath) => {
 };
 
 // 20. GET TUKANG PROFILE
+// File: src/controllers/tukang.controller.js
+
+// ... (fungsi helper deleteOldFile ada di atas) ...
+
+// 20. GET TUKANG PROFILE
 exports.getTukangProfile = async (req, res) => {
   try {
     const userId = req.user.id;
+    // 1. Query Anda sudah benar
     const user = await prisma.users.findUnique({
       where: { id: userId },
       include: {
@@ -31,26 +37,39 @@ exports.getTukangProfile = async (req, res) => {
       },
     });
 
+    // 2. Cek jika user atau profil tukang tidak ada
     if (!user || !user.profil_tukang) {
       return sendResponse(res, 404, 'error', 'Profil tukang tidak ditemukan');
     }
 
+    // 3. Hapus data sensitif
     delete user.password_hash;
     
-    // Gabungkan data
+    // --- INI PERBAIKANNYA ---
+    
+    // 4. Ambil data kategori yang bersih
+    const kategoriList = user.kategori_tukang.map(kt => kt.kategori);
+    
+    // 5. Hapus field 'kategori_tukang' yang berantakan dari object user
+    delete user.kategori_tukang;
+
+    // 6. Buat object data final yang bersih
     const data = {
       ...user,
       profil_tukang: user.profil_tukang,
-      kategori: user.kategori_tukang.map(kt => kt.kategori),
+      kategori: kategoriList, // Tambahkan field 'kategori' yang bersih
     };
-
+    
+    // 7. Kirim response
     sendResponse(res, 200, 'success', 'Data profil tukang berhasil diambil', data);
+
   } catch (error) {
     console.error('getTukangProfile error:', error);
     sendResponse(res, 500, 'error', 'Internal Server Error', error.message);
   }
 };
 
+// ... (sisa fungsi controller Anda) ...
 // 21. UPDATE TUKANG PROFILE
 exports.updateTukangProfile = async (req, res) => {
   try {
